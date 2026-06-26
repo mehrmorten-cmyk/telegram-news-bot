@@ -1,0 +1,15 @@
+# Render.com service configuration
+services:
+  - type: web
+    name: telegram-news-bot
+    runtime: python
+    buildCommand: pip install -r requirements.txt
+    startCommand: gunicorn main:app --bind 0.0.0.0:$PORT --workers 1 --threads 4 --preload
+    envVars:
+      - key: TELEGRAM_BOT_TOKEN
+        sync: false
+      - key: PERSONAL_CHANNEL_ID
+        sync: false
+      - key: ADMIN_CHAT_IDS
+        sync: false
+    plan: free
