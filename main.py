@@ -42,6 +42,20 @@ DB_PATH = os.environ.get("DB_PATH", "bot_data.db")
 CHECK_INTERVAL = int(os.environ.get("CHECK_INTERVAL", "300"))  # seconds
 PORT = int(os.environ.get("PORT", "10000"))
 
+# Default sources (restored automatically after server restart)
+# Comma-separated: "channel1,channel2,channel3"
+DEFAULT_CHANNELS = [
+    ch.strip()
+    for ch in os.environ.get("DEFAULT_CHANNELS", "").split(",")
+    if ch.strip()
+]
+# Comma-separated RSS URLs: "https://site1.com/feed/,https://site2.com/rss/"
+DEFAULT_WEB_SOURCES = [
+    url.strip()
+    for url in os.environ.get("DEFAULT_WEB_SOURCES", "").split(",")
+    if url.strip()
+]
+
 # Telegram API base
 TG_API = f"https://api.telegram.org/bot{BOT_TOKEN}"
 
@@ -126,6 +140,54 @@ def init_db():
     conn.commit()
     conn.close()
     log.info("Database initialized")
+    # Restore default sources from environment variables
+    _restore_defaults()
+
+
+def _restore_defaults():
+    """Restore default channels and web sources from env vars if DB is empty.
+    This handles Render's ephemeral disk — channels survive restarts."""
+    conn = get_db()
+    try:
+        # Restore Telegram channels
+        if DEFAULT_CHANNELS:
+            existing = conn.execute("SELECT COUNT(*) FROM telegram_sources").fetchone()[0]
+            if existing == 0:
+                for ch in DEFAULT_CHANNELS:
+                    try:
+                        conn.execute(
+                            "INSERT OR IGNORE INTO telegram_sources (username) VALUES (?)",
+                            (ch,),
+                        )
+                        log.info(f"Restored default channel: {ch}")
+                    except Exception as e:
+                        log.warning(f"Failed to restore channel {ch}: {e}")
+                conn.commit()
+                log.info(f"Restored {len(DEFAULT_CHANNELS)} default channels from env")
+
+        # Restore web sources
+        if DEFAULT_WEB_SOURCES:
+            existing = conn.execute("SELECT COUNT(*) FROM web_sources").fetchone()[0]
+            if existing == 0:
+                for url in DEFAULT_WEB_SOURCES:
+                    try:
+                        # Extract site name from URL
+                        from urllib.parse import urlparse
+                        parsed = urlparse(url)
+                        name = parsed.netloc.replace("www.", "")
+                        # Check if it's a direct feed URL or needs discovery
+                        feed_url = url
+                        conn.execute(
+                            "INSERT OR IGNORE INTO web_sources (name, url, feed_url) VALUES (?, ?, ?)",
+                            (name, url, feed_url),
+                        )
+                        log.info(f"Restored default web source: {name} -> {feed_url}")
+                    except Exception as e:
+                        log.warning(f"Failed to restore web source {url}: {e}")
+                conn.commit()
+                log.info(f"Restored {len(DEFAULT_WEB_SOURCES)} default web sources from env")
+    finally:
+        conn.close()
 
 
 def get_setting(key, default=""):
@@ -676,7 +738,7 @@ def handle_command(chat_id, text):
             try:
                 conn.execute("INSERT INTO telegram_sources (username) VALUES (?)", (username,))
                 conn.commit()
-                reply_to_admin(chat_id, f"✅ کانال @{username} اضافه شد.")
+                reply_to_admin(chat_id, f"✅ کانال @{username} اضافه شد.\n💡 برای ماندگاری، آن را به DEFAULT_CHANNELS در Render اضافه کنید.")
             except sqlite3.IntegrityError:
                 reply_to_admin(chat_id, f"⚠️ کانال @{username} قبلاً اضافه شده.")
 
@@ -787,7 +849,7 @@ def handle_command(chat_id, text):
                     (name, site_url, feed_url),
                 )
                 conn.commit()
-                reply_to_admin(chat_id, f"✅ سایت «{name}» اضافه شد.\nفید: {feed_url}")
+                reply_to_admin(chat_id, f"✅ سایت «{name}» اضافه شد.\nفید: {feed_url}\n💡 برای ماندگاری، فید را به DEFAULT_WEB_SOURCES در Render اضافه کنید.")
             except Exception as e:
                 reply_to_admin(chat_id, f"⚠️ خطا در اضافه کردن: {e}")
 
